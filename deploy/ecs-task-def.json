@@ -1,0 +1,54 @@
+{
+  "family": "ipr-scraper",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::053703324760:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::053703324760:role/ecsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "ipr-browser-agent",
+      "image": "053703324760.dkr.ecr.us-east-1.amazonaws.com/ipr-browser-agent:latest",
+      "essential": true,
+      "command": ["api", "--host", "0.0.0.0", "--port", "8000"],
+      "portMappings": [
+        { "containerPort": 8000, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name": "IPR_MAX_CAPTCHA_ATTEMPTS", "value": "8" },
+        { "name": "IPR_MIN_REQUEST_INTERVAL", "value": "1.5" },
+        { "name": "IPR_SAVE_RAW_HTML",        "value": "false" }
+      ],
+      "secrets": [
+        {
+          "name": "MONGODB_URI",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:053703324760:secret:ipr-scraper/mongodb-uri"
+        },
+        {
+          "name": "OPENAI_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:053703324760:secret:ipr-scraper/openai-api-key"
+        }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 30
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/ipr-scraper",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ],
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  }
+}

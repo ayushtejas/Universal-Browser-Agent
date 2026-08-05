@@ -1,0 +1,12 @@
+# Contains live DB credentials — never commit.
+.env
+
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Scraped HTML and exports.
+data/

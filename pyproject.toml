@@ -1,0 +1,32 @@
+[project]
+name = "ipr-agent"
+version = "0.1.0"
+description = "Scrape IP India application status / patent e-register into a relational DB"
+# Capped below 3.14 so uv provisions an interpreter with wheels for every dep.
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "httpx>=0.27",
+    "pymongo>=4.8",
+    "beautifulsoup4>=4.12",
+    "typer>=0.12",
+    "rich>=13.7",
+    "pydantic-settings>=2.3",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+# browseruse (default): Playwright + GPT-4o vision solves CAPTCHAs automatically.
+browser = ["playwright>=1.45", "openai>=1.0"]
+# browserbase: cloud Chrome with Live View (manual CAPTCHA).
+browserbase = ["playwright>=1.45", "browserbase>=1.0"]
+
+[project.scripts]
+ipr = "ipr_agent.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ipr_agent"]
