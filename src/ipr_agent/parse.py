@@ -70,6 +70,7 @@ ALIASES: dict[str, str] = {
     "publicationdateus11aordinary": "publication_date",
     "dateofgrant": "grant_date",
     "grantdate": "grant_date",
+    "dateofcertificateissue": "grant_date",  
     "requestforexaminationdate": "request_examination_date",
     "rfedate": "request_examination_date",
     "firstexaminationreportdate": "fer_date",

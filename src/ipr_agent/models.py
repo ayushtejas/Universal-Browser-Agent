@@ -42,6 +42,12 @@ class ApplicationResult(BaseModel):
     data: dict[str, Any] | None = Field(
         None, description="Scraped fields (only when status=done)"
     )
+    raw_fields: dict[str, str] | None = Field(
+        None,
+        description="Every label/value pair harvested from the portal page, including "
+        "ones not mapped to a typed `data` column — the source of truth when a label "
+        "variant isn't in parse.py's ALIASES yet (only when status=done).",
+    )
     error: str | None = None
     last_scraped_at: datetime | None = None
 
