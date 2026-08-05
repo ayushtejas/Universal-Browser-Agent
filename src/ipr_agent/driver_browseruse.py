@@ -2,10 +2,10 @@
 
 Hybrid approach — best of both worlds:
 - Playwright drives the form deterministically (stable element IDs, fast, reliable)
-- OpenAI GPT-4o vision reads the CAPTCHA image (the only part that needs an LLM)
+- GPT-4o vision reads the CAPTCHA image (the only part that needs an LLM)
 
-This avoids the full browser-use Agent overhead (DOM watchdog timeouts, planning
-loops, element index explosion) for a two-field form that hasn't changed since 2019.
+LLM calls are routed through Bifrost (Lyzr's unified LLM gateway) when
+BIFROST_API_KEY is set, falling back to a direct OpenAI key otherwise.
 
 One browser instance is reused across every record in a batch.
 """
@@ -33,12 +33,17 @@ def _solve_captcha_with_llm(
     image_bytes: bytes,
     *,
     api_key: str,
-    model: str = "gpt-4o",
+    model: str = "openai/gpt-4o",
+    base_url: str | None = None,
 ) -> str:
-    """Send the CAPTCHA image to GPT-4o vision and get the text back."""
+    """Send the CAPTCHA image to GPT-4o vision and get the text back.
+
+    When *base_url* points to Bifrost the OpenAI client proxies through it;
+    model names must then carry a provider prefix (e.g. ``openai/gpt-4o``).
+    """
     import openai
 
-    client = openai.OpenAI(api_key=api_key)
+    client = openai.OpenAI(api_key=api_key, base_url=base_url)
     b64 = base64.b64encode(image_bytes).decode("ascii")
 
     response = client.chat.completions.create(
@@ -92,24 +97,55 @@ def _solve_captcha_with_llm(
 class BrowserUseDriver:
     """Playwright browser + GPT-4o vision for CAPTCHA solving."""
 
+    BIFROST_BASE_URL = "https://bifrost.core.lyzr.app/v1"
+    BIFROST_DEFAULT_MODEL = "openai/gpt-4o"
+
     def __init__(
         self,
         openai_api_key: str | None = None,
         model: str = "gpt-4o",
         headless: bool = True,
     ) -> None:
-        # Resolve API key: arg → env → .env file
-        key = openai_api_key or os.environ.get("OPENAI_API_KEY", "")
-        if not key:
-            try:
-                from dotenv import dotenv_values
+        # Resolve API key + base URL.
+        # Priority: BIFROST_API_KEY (via Lyzr gateway) → OPENAI_API_KEY (direct).
+        key = openai_api_key or ""
+        base_url: str | None = None
 
-                key = dotenv_values(".env").get("OPENAI_API_KEY", "")
-            except ImportError:
-                pass
+        if not key:
+            # Try Bifrost first
+            key = os.environ.get("BIFROST_API_KEY", "")
+            if not key:
+                try:
+                    from dotenv import dotenv_values
+                    key = dotenv_values(".env").get("BIFROST_API_KEY", "")
+                except ImportError:
+                    pass
+            if key:
+                base_url = self.BIFROST_BASE_URL
+                model = os.environ.get(
+                    "BIFROST_MODEL", self.BIFROST_DEFAULT_MODEL,
+                )
+                logger.info(
+                    "using Bifrost LLM gateway for CAPTCHA solving (model=%s)",
+                    model,
+                )
+
+        if not key:
+            # Fall back to direct OpenAI
+            key = os.environ.get("OPENAI_API_KEY", "")
+            if not key:
+                try:
+                    from dotenv import dotenv_values
+                    key = dotenv_values(".env").get("OPENAI_API_KEY", "")
+                except ImportError:
+                    pass
+
         self.openai_api_key = key
+        self.base_url = base_url
         if not self.openai_api_key:
-            raise BrowserUseUnavailable("OPENAI_API_KEY is not set")
+            raise BrowserUseUnavailable(
+                "Neither BIFROST_API_KEY nor OPENAI_API_KEY is set"
+            )
         self.model = model
         self.headless = headless
         self._playwright: Any = None
@@ -211,6 +247,7 @@ class BrowserUseDriver:
                     image_bytes,
                     api_key=self.openai_api_key,
                     model=self.model,
+                    base_url=self.base_url,
                 )
                 say(f"{lookup_value}: LLM read CAPTCHA as '{captcha_text}'")
 

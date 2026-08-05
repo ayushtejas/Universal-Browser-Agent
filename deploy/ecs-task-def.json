@@ -26,8 +26,8 @@
           "valueFrom": "arn:aws:secretsmanager:us-east-1:053703324760:secret:ipr-scraper/mongodb-uri"
         },
         {
-          "name": "OPENAI_API_KEY",
-          "valueFrom": "arn:aws:secretsmanager:us-east-1:053703324760:secret:ipr-scraper/openai-api-key"
+          "name": "BIFROST_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:053703324760:secret:ipr-scraper/bifrost-api-key"
         }
       ],
       "healthCheck": {
