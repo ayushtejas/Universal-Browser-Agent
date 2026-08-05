@@ -164,6 +164,7 @@ def _build_result(doc: dict) -> ApplicationResult:
         lookup_value=doc.get("lookup_value", ""),
         status=status,
         data=doc.get("latest") if status == "done" else None,
+        raw_fields=doc.get("raw_fields") if status == "done" else None,
         error=scrape.get("last_error"),
         last_scraped_at=scrape.get("last_scraped_at"),
     )
