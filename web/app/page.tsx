@@ -59,7 +59,7 @@ type AgentRun = {
 
 const API_URL =
   process.env.NEXT_PUBLIC_AGENT_API_URL ??
-  'https://ipr-browser-agent-be.rapid.studio.lyzr.ai';
+  'http://localhost:8000';
 
 const modes: Array<{ id: Mode; label: string; icon: typeof MousePointer2 }> = [
   { id: 'automate', label: 'Automate', icon: MousePointer2 },
