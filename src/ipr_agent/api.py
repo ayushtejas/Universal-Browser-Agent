@@ -135,14 +135,17 @@ def _stop_worker() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    try:
-        store.ensure_indexes()
-        _start_worker()
-    except Exception:
-        # Keep the API process up so health checks and CORS preflights still
-        # respond while the database is unavailable. Data endpoints will fail
-        # explicitly instead of making the load balancer return a generic 504.
-        logger.exception("database unavailable during startup; API is degraded")
+    if settings.agent_memory_fallback:
+        logger.warning("agent runs are using non-persistent in-memory storage")
+    else:
+        try:
+            store.ensure_indexes()
+            _start_worker()
+        except Exception:
+            # Keep the API process up so health checks and CORS preflights still
+            # respond while the database is unavailable. Data endpoints will fail
+            # explicitly instead of making the load balancer return a generic 504.
+            logger.exception("database unavailable during startup; API is degraded")
     yield
     _stop_worker()
 
@@ -220,19 +223,30 @@ def _agent_worker(run_id: str, body: AgentRunSubmit) -> None:
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])
 def health():
+    if settings.agent_memory_fallback:
+        return HealthResponse(
+            status="ok",
+            worker_running=False,
+            queue_pending=0,
+            database_connected=False,
+            agent_run_storage="memory",
+        )
     try:
         pending = store.status_counts().get("pending", 0)
         database_connected = True
         service_status = "ok"
+        agent_run_storage = "mongodb"
     except Exception:
         pending = 0
         database_connected = False
         service_status = "degraded"
+        agent_run_storage = "unavailable"
     return HealthResponse(
         status=service_status,
         worker_running=_worker_running,
         queue_pending=pending,
         database_connected=database_connected,
+        agent_run_storage=agent_run_storage,
     )
 
 

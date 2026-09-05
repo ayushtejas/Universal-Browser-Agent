@@ -18,7 +18,9 @@ same record.
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
+import threading
 from typing import Any, Iterator
 
 from bson import ObjectId
@@ -37,6 +39,8 @@ FAILED = "failed"
 NOT_FOUND = "not_found"
 
 _client: MongoClient | None = None
+_memory_agent_runs: dict[str, dict[str, Any]] = {}
+_memory_agent_runs_lock = threading.RLock()
 
 
 def utcnow() -> dt.datetime:
@@ -164,17 +168,37 @@ def create_agent_run(
             {"at": now, "kind": "queued", "message": "Run accepted and queued"}
         ],
     }
+    if settings.agent_memory_fallback:
+        with _memory_agent_runs_lock:
+            _memory_agent_runs[run_id] = copy.deepcopy(doc)
+        return copy.deepcopy(doc)
     agent_runs().insert_one(doc)
     doc.pop("_id", None)
     return doc
 
 
 def get_agent_run(run_id: str) -> dict[str, Any] | None:
+    if settings.agent_memory_fallback:
+        with _memory_agent_runs_lock:
+            doc = _memory_agent_runs.get(run_id)
+            if doc is None:
+                return None
+            public_doc = copy.deepcopy(doc)
+            public_doc.pop("client_fingerprint", None)
+            return public_doc
     return agent_runs().find_one({"run_id": run_id}, {"_id": 0, "client_fingerprint": 0})
 
 
 def recent_agent_run_count(client_fingerprint: str, *, hours: int = 1) -> int:
     cutoff = utcnow() - dt.timedelta(hours=hours)
+    if settings.agent_memory_fallback:
+        with _memory_agent_runs_lock:
+            return sum(
+                1
+                for doc in _memory_agent_runs.values()
+                if doc["client_fingerprint"] == client_fingerprint
+                and doc["created_at"] >= cutoff
+            )
     return int(
         agent_runs().count_documents(
             {"client_fingerprint": client_fingerprint, "created_at": {"$gte": cutoff}}
@@ -184,6 +208,11 @@ def recent_agent_run_count(client_fingerprint: str, *, hours: int = 1) -> int:
 
 def update_agent_run(run_id: str, **fields: Any) -> None:
     fields["updated_at"] = utcnow()
+    if settings.agent_memory_fallback:
+        with _memory_agent_runs_lock:
+            if run_id in _memory_agent_runs:
+                _memory_agent_runs[run_id].update(copy.deepcopy(fields))
+        return
     agent_runs().update_one({"run_id": run_id}, {"$set": fields})
 
 
@@ -205,6 +234,14 @@ def append_agent_event(
     update: dict[str, Any] = {"updated_at": utcnow()}
     if progress is not None:
         update["progress"] = max(0, min(progress, 100))
+    if settings.agent_memory_fallback:
+        with _memory_agent_runs_lock:
+            doc = _memory_agent_runs.get(run_id)
+            if doc is None:
+                return
+            doc["events"] = [*doc.get("events", []), event][-100:]
+            doc.update(update)
+        return
     agent_runs().update_one(
         {"run_id": run_id},
         {"$push": {"events": {"$each": [event], "$slice": -100}}, "$set": update},

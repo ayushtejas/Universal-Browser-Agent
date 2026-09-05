@@ -140,23 +140,24 @@ def _llm() -> Any:
 
 async def run_agent(run_id: str, body: AgentRunSubmit) -> None:
     """Execute one run and stream compact, non-sensitive events to MongoDB."""
-    try:
-        from browser_use import Agent, Browser
-        from browserbase import Browserbase
-    except ImportError as exc:
-        raise RuntimeError(
-            "Install the browser extra: pip install -e '.[browser]'"
-        ) from exc
-
-    api_key = os.environ.get("BROWSERBASE_API_KEY", "")
-    if not api_key:
-        raise RuntimeError("BROWSERBASE_API_KEY is required")
-
-    bb = Browserbase(api_key=api_key)
+    bb: Any = None
     browser: Any = None
     session: Any = None
     try:
         store.update_agent_run(run_id, status="running", progress=6)
+        try:
+            from browser_use import Agent, Browser
+            from browserbase import Browserbase
+        except ImportError as exc:
+            raise RuntimeError(
+                "Install the browser extra: pip install -e '.[browser]'"
+            ) from exc
+
+        api_key = os.environ.get("BROWSERBASE_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("BROWSERBASE_API_KEY is required")
+
+        bb = Browserbase(api_key=api_key)
         store.append_agent_event(
             run_id, kind="starting", message="Provisioning an isolated cloud browser", progress=8
         )
@@ -246,7 +247,7 @@ async def run_agent(run_id: str, body: AgentRunSubmit) -> None:
                 await browser.stop()
             except Exception:
                 pass
-        if session is not None:
+        if bb is not None and session is not None:
             try:
                 bb.sessions.update(session.id, status="REQUEST_RELEASE")
             except Exception:

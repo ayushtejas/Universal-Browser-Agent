@@ -24,6 +24,8 @@ console = Console()
 @app.callback()
 def _bootstrap() -> None:
     """Runs before every command: indexes are cheap and idempotent."""
+    if settings.agent_memory_fallback:
+        return
     store.ensure_indexes()
 
 

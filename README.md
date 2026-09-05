@@ -41,6 +41,11 @@ npm run dev
 Only fresh, rotated credentials belong in `.env`. The browser and model keys
 must stay server-side; the web app receives only the API base URL.
 
+The example environment enables `IPR_AGENT_MEMORY_FALLBACK` for local
+development, so POST requests immediately return a run ID and the UI can poll
+without MongoDB. Run history is cleared when the API restarts; keep this flag
+disabled in production and use MongoDB there.
+
 ## Public deployment guardrails
 
 Anonymous safe-mode runs are deliberately bounded: public URLs only, no private

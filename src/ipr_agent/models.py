@@ -72,6 +72,7 @@ class HealthResponse(BaseModel):
     worker_running: bool = False
     queue_pending: int = 0
     database_connected: bool = False
+    agent_run_storage: Literal["mongodb", "memory", "unavailable"] = "unavailable"
 
 
 # ── General browser-agent API ────────────────────────────────────────────

@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     agent_max_concurrency: int = 2
     agent_session_timeout: int = 900
     agent_model: str = "gpt-4o"
+    agent_memory_fallback: bool = False
     cors_origins: str = "http://localhost:3000"
 
     user_agent: str = (
