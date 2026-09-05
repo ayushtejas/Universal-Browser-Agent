@@ -11,16 +11,28 @@ batches and serves status/results — it never touches the browser.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
+import secrets
 import threading
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import store
+from .agent_runner import (
+    UnsafeRun,
+    run_agent_sync,
+    validate_public_request,
+    validate_public_url,
+)
+from .config import settings
 from .models import (
+    AgentRunResponse,
+    AgentRunSubmit,
     ApplicationResult,
     BatchListItem,
     BatchProgress,
@@ -35,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 _worker_running = False
 _worker_thread: threading.Thread | None = None
+_agent_slots = threading.BoundedSemaphore(value=settings.agent_max_concurrency)
 
 
 def _worker_loop() -> None:
@@ -122,8 +135,14 @@ def _stop_worker() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    store.ensure_indexes()
-    _start_worker()
+    try:
+        store.ensure_indexes()
+        _start_worker()
+    except Exception:
+        # Keep the API process up so health checks and CORS preflights still
+        # respond while the database is unavailable. Data endpoints will fail
+        # explicitly instead of making the load balancer return a generic 504.
+        logger.exception("database unavailable during startup; API is degraded")
     yield
     _stop_worker()
 
@@ -139,7 +158,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in production
+    allow_origins=[
+        origin.strip()
+        for origin in settings.cors_origins.split(",")
+        if origin.strip()
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -178,16 +201,115 @@ def _batch_status(progress: BatchProgress) -> str:
     return "submitted"
 
 
+def _client_fingerprint(request: Request) -> str:
+    # Hash instead of persisting a raw IP. Do not trust forwarded headers here;
+    # configure the ASGI proxy layer to provide the real request.client value.
+    host = request.client.host if request.client else "unknown"
+    return hashlib.sha256(f"waypoint:{host}".encode()).hexdigest()
+
+
+def _agent_worker(run_id: str, body: AgentRunSubmit) -> None:
+    with _agent_slots:
+        try:
+            run_agent_sync(run_id, body)
+        except Exception:
+            logger.exception("Waypoint run %s failed", run_id)
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])
 def health():
-    pending = store.status_counts().get("pending", 0)
+    try:
+        pending = store.status_counts().get("pending", 0)
+        database_connected = True
+        service_status = "ok"
+    except Exception:
+        pending = 0
+        database_connected = False
+        service_status = "degraded"
     return HealthResponse(
-        status="ok",
+        status=service_status,
         worker_running=_worker_running,
         queue_pending=pending,
+        database_connected=database_connected,
     )
+
+
+@app.post(
+    "/api/v1/agent/runs",
+    response_model=AgentRunResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["browser agent"],
+)
+def start_agent_run(body: AgentRunSubmit, request: Request):
+    """Start a bounded same-site browser run and return immediately for polling."""
+    try:
+        body.target_url = validate_public_url(body.target_url)
+        validate_public_request(body)
+    except UnsafeRun as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
+    fingerprint = _client_fingerprint(request)
+    try:
+        recent_runs = store.recent_agent_run_count(fingerprint)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Run storage is temporarily unavailable",
+        ) from exc
+    if recent_runs >= settings.public_runs_per_hour:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Public limit reached: {settings.public_runs_per_hour} runs per hour",
+        )
+
+    run_id = secrets.token_hex(6)
+    try:
+        doc = store.create_agent_run(
+            run_id=run_id,
+            client_fingerprint=fingerprint,
+            target_url=body.target_url,
+            instructions=body.instructions,
+            mode=body.mode,
+            output_format=body.output_format,
+            safe_mode=body.safe_mode,
+            max_steps=body.max_steps,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Run storage is temporarily unavailable",
+        ) from exc
+    thread = threading.Thread(
+        target=_agent_worker,
+        args=(run_id, body),
+        daemon=True,
+        name=f"waypoint-{run_id}",
+    )
+    thread.start()
+    return AgentRunResponse.model_validate(doc)
+
+
+@app.get(
+    "/api/v1/agent/runs/{run_id}",
+    response_model=AgentRunResponse,
+    tags=["browser agent"],
+)
+def get_agent_run(run_id: str):
+    """Poll a run for progress, live-view URL, trace events, and final output."""
+    if not re.fullmatch(r"[0-9a-f]{12}", run_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "run not found")
+    try:
+        doc = store.get_agent_run(run_id)
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Run storage is temporarily unavailable",
+        ) from exc
+    if doc is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "run not found")
+    return AgentRunResponse.model_validate(doc)
 
 
 @app.post("/api/v1/batches", response_model=BatchResponse, tags=["batches"])

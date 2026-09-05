@@ -84,6 +84,10 @@ def runs() -> Collection:
     return database()[settings.collection_runs]
 
 
+def agent_runs() -> Collection:
+    return database()[settings.collection_agent_runs]
+
+
 def ensure_indexes() -> list[str]:
     """Idempotent. Safe to call on every command."""
     created: list[str] = []
@@ -109,9 +113,102 @@ def ensure_indexes() -> list[str]:
             [("solution", ASCENDING), ("created_at", ASCENDING)], name="ix_open"
         )
         created.append("captcha_challenges.ix_open")
+        agent_runs().create_index(
+            [("run_id", ASCENDING)], unique=True, name="uq_agent_run_id"
+        )
+        created.append("agent_runs.uq_agent_run_id")
+        agent_runs().create_index(
+            [("client_fingerprint", ASCENDING), ("created_at", ASCENDING)],
+            name="ix_agent_rate_limit",
+        )
+        created.append("agent_runs.ix_agent_rate_limit")
     except OperationFailure as exc:
         raise RuntimeError(f"could not create indexes: {exc}") from exc
     return created
+
+
+# --------------------------------------------------------------------------
+# Waypoint general browser-agent runs
+# --------------------------------------------------------------------------
+
+def create_agent_run(
+    *,
+    run_id: str,
+    client_fingerprint: str,
+    target_url: str,
+    instructions: str,
+    mode: str,
+    output_format: str,
+    safe_mode: bool,
+    max_steps: int,
+) -> dict[str, Any]:
+    now = utcnow()
+    doc: dict[str, Any] = {
+        "run_id": run_id,
+        "client_fingerprint": client_fingerprint,
+        "status": "queued",
+        "created_at": now,
+        "updated_at": now,
+        "target_url": target_url,
+        "instructions": instructions,
+        "mode": mode,
+        "output_format": output_format,
+        "safe_mode": safe_mode,
+        "max_steps": max_steps,
+        "progress": 2,
+        "live_view_url": None,
+        "session_id": None,
+        "result": None,
+        "error": None,
+        "events": [
+            {"at": now, "kind": "queued", "message": "Run accepted and queued"}
+        ],
+    }
+    agent_runs().insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+def get_agent_run(run_id: str) -> dict[str, Any] | None:
+    return agent_runs().find_one({"run_id": run_id}, {"_id": 0, "client_fingerprint": 0})
+
+
+def recent_agent_run_count(client_fingerprint: str, *, hours: int = 1) -> int:
+    cutoff = utcnow() - dt.timedelta(hours=hours)
+    return int(
+        agent_runs().count_documents(
+            {"client_fingerprint": client_fingerprint, "created_at": {"$gte": cutoff}}
+        )
+    )
+
+
+def update_agent_run(run_id: str, **fields: Any) -> None:
+    fields["updated_at"] = utcnow()
+    agent_runs().update_one({"run_id": run_id}, {"$set": fields})
+
+
+def append_agent_event(
+    run_id: str,
+    *,
+    kind: str,
+    message: str,
+    url: str | None = None,
+    progress: int | None = None,
+) -> None:
+    event: dict[str, Any] = {
+        "at": utcnow(),
+        "kind": kind,
+        "message": message[:500],
+    }
+    if url:
+        event["url"] = url[:2048]
+    update: dict[str, Any] = {"updated_at": utcnow()}
+    if progress is not None:
+        update["progress"] = max(0, min(progress, 100))
+    agent_runs().update_one(
+        {"run_id": run_id},
+        {"$push": {"events": {"$each": [event], "$slice": -100}}, "$set": update},
+    )
 
 
 # --------------------------------------------------------------------------

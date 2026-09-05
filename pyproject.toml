@@ -17,7 +17,12 @@ dependencies = [
 
 [project.optional-dependencies]
 # browseruse (default): Playwright + GPT-4o vision solves CAPTCHAs automatically.
-browser = ["playwright>=1.45", "openai>=1.0"]
+browser = [
+    "playwright>=1.45",
+    "openai>=1.0",
+    "browser-use>=0.10",
+    "browserbase>=1.0",
+]
 # browserbase: cloud Chrome with Live View (manual CAPTCHA).
 browserbase = ["playwright>=1.45", "browserbase>=1.0"]
 

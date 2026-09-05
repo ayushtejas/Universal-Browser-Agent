@@ -1,4 +1,63 @@
-# ipr-agent
+# Waypoint browser agent
+
+Waypoint is a public-facing browser automation workspace built on the existing
+IPR browser service. A visitor provides a public website, chooses a mode, and
+describes an outcome in plain language. The API provisions an isolated
+Browserbase session, runs Browser Use against that site, and returns a compact
+trace plus a verified result.
+
+The custom modes are:
+
+- **Automate** — reversible navigation and interaction workflows.
+- **Scrape** — read-only structured extraction with source URLs.
+- **Verify** — natural-language UI checks reported as pass/fail/blocked.
+- **Monitor** — a deterministic snapshot suitable for later change detection.
+
+The web app lives in `web/`. The general-agent endpoints are:
+
+```text
+POST /api/v1/agent/runs
+GET  /api/v1/agent/runs/{run_id}
+```
+
+## Run Waypoint locally
+
+```bash
+uv venv --python 3.12
+uv pip install -e ".[browser]"
+cp .env.example .env
+ipr api --host 0.0.0.0 --port 8000
+```
+
+In another terminal:
+
+```bash
+cd web
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+Only fresh, rotated credentials belong in `.env`. The browser and model keys
+must stay server-side; the web app receives only the API base URL.
+
+## Public deployment guardrails
+
+Anonymous safe-mode runs are deliberately bounded: public URLs only, no private
+or link-local IPs, one target site and its subdomains, a step cap, per-client
+hourly rate limit, and a small global concurrency pool. Logins, payments,
+account changes, messaging, publishing, CAPTCHA/2FA handling, file uploads, and
+destructive actions are rejected. Page content is treated as untrusted data so
+it cannot override the task's safety contract.
+
+Before exposing the service, put it behind a managed reverse proxy with request
+size/time limits, abuse monitoring, and real account quotas or billing. Set
+`IPR_CORS_ORIGINS` to the exact deployed web origin; do not use `*` with a
+credentialed API.
+
+---
+
+# IPR patent-status agent
 
 Pulls Indian patent application status / patent e-register data from
 `iprsearch.ipindia.gov.in` into MongoDB (AWS DocumentDB), keyed by the
